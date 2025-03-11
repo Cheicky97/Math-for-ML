@@ -77,7 +77,23 @@ class Optimizer:
 
     def steepest_direction(self, grad:np.ndarray, norm=2, H:np.ndarray=None)->np.ndarray:
         """
-        return dual norm of vec given norm
+        Compute steepest descent direction regarding the norm chosen
+        ------------
+        Parameters:
+        grad: np.ndarray
+            Gradient
+        norm : int or str
+            fix the norm.
+            Possible values:
+            norm = 0 for quadratic norm, in this case a matrix H has to be provided.
+            norm = 1 for l1-norm
+            norm = np.inf for linf-norm
+            norm = 2 for the euclidean norm 
+        H: np.ndarray
+            matrix used in the definition of the quadratic norm.
+        -----------
+        return
+            (np.ndarray) steepest descent direction
         """
         if norm == 2:
             return - grad
@@ -88,7 +104,7 @@ class Optimizer:
             return new_grad
         elif norm == np.inf:
             return np.linalg.norm(grad, ord=1) * np.sign(grad)
-        elif norm == "quad" and H != None:
+        elif norm == 0 and H != None:
             return - np.inv(H) @ grad
 
     def backtracking(self, *args, grad, deltax, step_size, beta:float, alpha:float=0.1)->float:
@@ -118,13 +134,14 @@ class Optimizer:
         """
         # convert args to a modifiable format
         args = np.asarray(args)
-        while self.func((args + step_size*deltax)) < self.func(*args) + alpha * step_size * grad @ deltax:
-            step_size = beta * step_size
+        while self.func((args + step_size*deltax)) > self.func(*args) + alpha * step_size * grad @ deltax:
+            step_size *= beta
         return step_size
 
-
-    def steepest_descent(self, *args, jac="forward", norm=2, H=None, step_size=0.5, backtrack=False, eta=1e-6,
-                        max_iter=100, h=5.e-4, history=False, beta=0.5, alpha=0.1):
+    def steepest_descent(self, *args, jac="forward", norm:int=2, P:np.ndarray=None, step_size:float=1.0, eta:float=1e-6,
+                          backtrack=False, beta_bt:float=0.5, alpha_bt:float=0.1,
+                         moment_gd:bool=False, zeta_momentum:float=0.8, max_iter:int=100, h:float=5.e-4,
+                         history=False):
         """
         Search for local minima using following the steepest descent.
         ------
@@ -137,9 +154,23 @@ class Optimizer:
             or alternatively, indicate the differentiation method to use to estimate it
             either "forward" of "centered".
             The default is "forward"
+        norm : int or str
+            fix the norm.
+            Possible values:
+            norm = 0 for quadratic norm, in this case a matrix P has to be provided.
+            norm = 1 for l1-norm
+            norm = np.inf for linf-norm
+            norm = 2 for the euclidean norm 
+            The default is 2.
+        P: np.ndarray
+            matrix used in the definition of the quadratic norm.
+            The default is None.
         step_size: float or np.ndarray of float
             the learning rate (also called step_size or aggressivity)
             The default is 0.5.
+        backtrack: bool
+            if true, bracktracking method will be used for line search.
+            Note that is recommended to set step_size to 1.0
         eta: float
             the tolerance criteria on the convergence of the gradient.
             The default is 1e-5
@@ -149,9 +180,25 @@ class Optimizer:
         h: np.ndarray of float
             value of small steps for differentiation one for each argument
             for e.g. if args of len 3 h must be np.ndarray of len 3 or a list.
+        history: bool
+            If True will store and return the history of the optimization process
+            The default is False.
+        beta: float or np.ndarray
+            factor scaling step_size
+            is often chosen to be between 0.1 (which corresponds
+            to a very crude search) and 0.8 (which corresponds
+            to a less crude search).
+            See page 466 of "Convex Optimization" by Stephen Boyd & Lieven 
+            The default is 0.5
+        alpha: float or np.ndarray
+            a parameter of the backtracking
+            Values of alpha typically range between 0.01 and 0.3
+            The default is 0.1
         """
-        traj = []
         args = np.asarray(args)
+        traj = []
+        delta_x = np.zeros_like(args) # do not need to be modified (use for momentum GD)
+
         # h must be an iterable
         if isinstance(h, (float, int)):
             h = np.full_like(args, h, dtype="float")
@@ -166,23 +213,32 @@ class Optimizer:
             jac = lambda *args : self.forward_diff(*args, h=h)
         elif jac.lower() == "centered":
             jac = lambda *args : self.centered_diff(*args, h=h)
+
+        # function for calculating the direction
+        direction = lambda grad : self.steepest_direction(grad, norm=norm, H=P)
+
         # optimisation procedure
         for i in range(max_iter):
             #record history
             if history:
                 traj.append(*args)
-
             # direction search
             grad = jac(*args)
-            step = self.steepest_direction(grad, norm=norm, H=H)
-            # backtracking
+            step = direction(grad)
+            # line seach using backtracking method
             if backtrack:
-                step_size = self.backtracking(*args, grad=grad, deltax=step,
-                                            deltax=step_size, beta=beta, alpha=alpha
-                                            )
-            #criteria on the gradient to not waste resources when stuck in a flat region
+                step_size = self.backtracking(*args, grad=grad, deltax=step, step_size=step_size,
+                                                beta=beta_bt, alpha=alpha_bt)
+    
+            # criteria on the gradient to not waste resources when stuck in a flat region
             if np.linalg.norm(grad) >= eta:
-                    args += step_size * self.steepest_direction
+                    if moment_gd:
+                        x_0 = args
+                        # heavy ball method Polyak's approach
+                        args += step_size * step + zeta_momentum * delta_x
+                        delta_x = args - x_0
+                    else:
+                        args += step_size * step
             else:
                 print(f"Converged at step {i}\n")
                 break

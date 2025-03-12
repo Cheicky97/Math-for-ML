@@ -196,7 +196,8 @@ class Optimizer:
             The default is 0.1
         """
         args = np.asarray(args)
-        traj = []
+        f_history = []
+        args_history = []
         delta_x = np.zeros_like(args) # do not need to be modified (use for momentum GD)
 
         # h must be an iterable
@@ -221,7 +222,8 @@ class Optimizer:
         for i in range(max_iter):
             #record history
             if history:
-                traj.append(*args)
+                f_history.append(self.func(*args))
+                args_history.append(args)
             # direction search
             grad = jac(*args)
             step = direction(grad)
@@ -243,4 +245,4 @@ class Optimizer:
                 print(f"Converged at step {i}\n")
                 break
 
-        return args, self.func(*args), np.asarray(traj, dtype="float")
+        return args, self.func(*args), args_history, f_history

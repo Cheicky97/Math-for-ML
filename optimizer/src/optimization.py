@@ -1,4 +1,3 @@
-from os import setegid
 import numpy as np
 
 class Optimizer:
